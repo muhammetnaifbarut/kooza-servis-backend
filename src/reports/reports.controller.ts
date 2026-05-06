@@ -17,6 +17,24 @@ export class ReportsController {
     return this.reportsService.getDashboardStats(t, b);
   }
 
+  @Get('x-report')
+  @Roles(UserRole.MANAGER, UserRole.OWNER, UserRole.CASHIER, UserRole.ACCOUNTANT)
+  @ApiOperation({ summary: 'X Raporu — anlık (gün kapanmadan)' })
+  getXReport(@CurrentUser('tenantId') t: string, @CurrentUser('branchId') b: string) {
+    return this.reportsService.getXReport(t, b);
+  }
+
+  @Get('z-report')
+  @Roles(UserRole.MANAGER, UserRole.OWNER, UserRole.ACCOUNTANT)
+  @ApiOperation({ summary: 'Z Raporu — gün sonu kapanış (mali denetim)' })
+  getZReport(
+    @CurrentUser('tenantId') t: string,
+    @CurrentUser('branchId') b: string,
+    @Query('date') date: string,
+  ) {
+    return this.reportsService.getZReport(t, b, date);
+  }
+
   @Get('sales')
   @Roles(UserRole.MANAGER, UserRole.OWNER, UserRole.ACCOUNTANT)
   @ApiOperation({ summary: 'Satış raporu' })
