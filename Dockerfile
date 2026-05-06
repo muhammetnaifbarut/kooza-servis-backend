@@ -9,7 +9,7 @@ WORKDIR /app
 # Dependencies
 COPY package*.json ./
 COPY prisma ./prisma
-RUN npm ci
+RUN npm install --no-audit --no-fund
 
 # Source + build
 COPY . .
