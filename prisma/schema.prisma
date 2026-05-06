@@ -1,0 +1,881 @@
+// ============================================================
+// HIZMET KASA — Enterprise SaaS Restaurant Automation
+// Prisma Schema — PostgreSQL
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// SAAS CORE
+// ─────────────────────────────────────────────
+
+model Tenant {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  domain        String?  @unique
+  logoUrl       String?
+  phone         String?
+  email         String?
+  address       String?
+  taxNumber     String?
+  currency      String   @default("TRY")
+  timezone      String   @default("Europe/Istanbul")
+  locale        String   @default("tr")
+  isActive      Boolean  @default(true)
+  trialEndsAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  subscription  Subscription?
+  branches      Branch[]
+  users         User[]
+  products      Product[]
+  categories    Category[]
+  customers     Customer[]
+  suppliers     Supplier[]
+  campaigns     Campaign[]
+  financialAccounts FinancialAccount[]
+  settings      TenantSettings?
+
+  @@map("tenants")
+}
+
+model TenantSettings {
+  id              String  @id @default(cuid())
+  tenantId        String  @unique
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  receiptHeader   String?
+  receiptFooter   String?
+  taxRate         Float   @default(18)
+  serviceCharge   Float   @default(0)
+  currency        String  @default("TRY")
+  loyaltyEnabled  Boolean @default(false)
+  loyaltyRate     Float   @default(1)   // points per 1 TRY
+  qrMenuEnabled   Boolean @default(true)
+  onlineOrderEnabled Boolean @default(false)
+  stripeAccountId String?
+
+  @@map("tenant_settings")
+}
+
+model SubscriptionPlan {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  description  String?
+  price        Float
+  interval     PlanInterval @default(MONTHLY)
+  maxBranches  Int      @default(1)
+  maxUsers     Int      @default(5)
+  maxProducts  Int      @default(100)
+  features     Json     @default("[]")
+  isActive     Boolean  @default(true)
+  stripePriceId String?
+  createdAt    DateTime @default(now())
+
+  subscriptions Subscription[]
+
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id              String   @id @default(cuid())
+  tenantId        String   @unique
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId          String
+  plan            SubscriptionPlan @relation(fields: [planId], references: [id])
+  status          SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean @default(false)
+  stripeSubscriptionId String?
+  stripeCustomerId     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+// ─────────────────────────────────────────────
+// USERS & AUTH
+// ─────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId     String?
+  branch       Branch?   @relation(fields: [branchId], references: [id])
+  email        String
+  phone        String?
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         UserRole  @default(WAITER)
+  avatarUrl    String?
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  refreshTokens RefreshToken[]
+  orders        Order[]
+  shifts        Shift[]
+  shiftEntries  ShiftEntry[]
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────
+// BRANCHES
+// ─────────────────────────────────────────────
+
+model Branch {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  code        String
+  address     String?
+  phone       String?
+  email       String?
+  latitude    Float?
+  longitude   Float?
+  isActive    Boolean  @default(true)
+  openTime    String?  // "09:00"
+  closeTime   String?  // "23:00"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users         User[]
+  tables        RestaurantTable[]
+  orders        Order[]
+  stockItems    StockItem[]
+  stockTransfers StockTransfer[]
+  shifts        Shift[]
+  financialTransactions FinancialTransaction[]
+
+  @@unique([tenantId, code])
+  @@map("branches")
+}
+
+// ─────────────────────────────────────────────
+// TABLES & POS
+// ─────────────────────────────────────────────
+
+model RestaurantTable {
+  id         String      @id @default(cuid())
+  branchId   String
+  branch     Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name       String
+  section    String?     // "Salon", "Teras", "VIP"
+  capacity   Int         @default(4)
+  posX       Float?
+  posY       Float?
+  shape      TableShape  @default(SQUARE)
+  status     TableStatus @default(EMPTY)
+  qrCode     String?     @unique
+  isActive   Boolean     @default(true)
+
+  orders     Order[]
+
+  @@map("restaurant_tables")
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  tenantId      String
+  branchId      String
+  branch        Branch      @relation(fields: [branchId], references: [id])
+  tableId       String?
+  table         RestaurantTable? @relation(fields: [tableId], references: [id])
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  customerId    String?
+  customer      Customer?   @relation(fields: [customerId], references: [id])
+  orderNumber   String
+  type          OrderType   @default(DINE_IN)
+  status        OrderStatus @default(PENDING)
+  note          String?
+  subtotal      Float       @default(0)
+  taxAmount     Float       @default(0)
+  serviceCharge Float       @default(0)
+  discount      Float       @default(0)
+  total         Float       @default(0)
+  paidAmount    Float       @default(0)
+  changeAmount  Float       @default(0)
+  source        OrderSource @default(POS)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  closedAt      DateTime?
+
+  items         OrderItem[]
+  payments      Payment[]
+  splits        OrderSplit[]
+
+  @@unique([branchId, orderNumber])
+  @@map("orders")
+}
+
+model OrderItem {
+  id            String       @id @default(cuid())
+  orderId       String
+  order         Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product      @relation(fields: [productId], references: [id])
+  name          String       // snapshot
+  price         Float        // snapshot
+  quantity      Float        @default(1)
+  discount      Float        @default(0)
+  total         Float
+  note          String?
+  status        KitchenStatus @default(WAITING)
+  sentToKitchen Boolean      @default(false)
+  sentAt        DateTime?
+  preparedAt    DateTime?
+  servedAt      DateTime?
+  modifiers     Json?        // extra options
+
+  @@map("order_items")
+}
+
+model OrderSplit {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  label       String  // "Kişi 1", "Masa A"
+  amount      Float
+  isPaid      Boolean @default(false)
+
+  payments    Payment[]
+
+  @@map("order_splits")
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  orderId     String
+  order       Order         @relation(fields: [orderId], references: [id])
+  splitId     String?
+  split       OrderSplit?   @relation(fields: [splitId], references: [id])
+  method      PaymentMethod
+  amount      Float
+  tip         Float         @default(0)
+  reference   String?       // stripe payment intent id
+  status      PaymentStatus @default(COMPLETED)
+  createdAt   DateTime      @default(now())
+
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────
+// PRODUCTS & CATEGORIES
+// ─────────────────────────────────────────────
+
+model Category {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parentId    String?
+  parent      Category? @relation("SubCategories", fields: [parentId], references: [id])
+  children    Category[] @relation("SubCategories")
+  name        String
+  imageUrl    String?
+  color       String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+
+  products    Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId   String?
+  category     Category? @relation(fields: [categoryId], references: [id])
+  name         String
+  description  String?
+  imageUrl     String?
+  price        Float
+  cost         Float?
+  barcode      String?
+  sku          String?
+  unit         String   @default("adet")
+  taxRate      Float    @default(18)
+  isActive     Boolean  @default(true)
+  isAvailable  Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  type         ProductType @default(FOOD)
+  preparationTime Int?  // minutes
+
+  orderItems   OrderItem[]
+  recipe       RecipeItem[]
+  usedInRecipes RecipeItem[] @relation("RecipeIngredient")
+  stockItems   StockItem[]
+  modifierGroups ProductModifierGroup[]
+
+  @@map("products")
+}
+
+model ModifierGroup {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  isRequired  Boolean  @default(false)
+  minSelect   Int      @default(0)
+  maxSelect   Int      @default(1)
+
+  options     ModifierOption[]
+  products    ProductModifierGroup[]
+
+  @@map("modifier_groups")
+}
+
+model ModifierOption {
+  id          String  @id @default(cuid())
+  groupId     String
+  group       ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name        String
+  price       Float   @default(0)
+  isDefault   Boolean @default(false)
+
+  @@map("modifier_options")
+}
+
+model ProductModifierGroup {
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  groupId   String
+  group     ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([productId, groupId])
+  @@map("product_modifier_groups")
+}
+
+// ─────────────────────────────────────────────
+// STOCK ERP
+// ─────────────────────────────────────────────
+
+model StockItem {
+  id           String   @id @default(cuid())
+  branchId     String
+  branch       Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id])
+  quantity     Float    @default(0)
+  minQuantity  Float    @default(0)    // alarm threshold
+  maxQuantity  Float?
+  unit         String   @default("adet")
+  updatedAt    DateTime @updatedAt
+
+  movements    StockMovement[]
+
+  @@unique([branchId, productId])
+  @@map("stock_items")
+}
+
+model StockMovement {
+  id          String        @id @default(cuid())
+  stockItemId String
+  stockItem   StockItem     @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+  type        StockMoveType
+  quantity    Float
+  before      Float
+  after       Float
+  note        String?
+  reference   String?
+  createdAt   DateTime      @default(now())
+  createdBy   String?
+
+  @@map("stock_movements")
+}
+
+model StockTransfer {
+  id            String   @id @default(cuid())
+  fromBranchId  String
+  fromBranch    Branch   @relation(fields: [fromBranchId], references: [id])
+  toBranchId    String
+  productId     String
+  quantity      Float
+  note          String?
+  status        TransferStatus @default(PENDING)
+  createdAt     DateTime @default(now())
+  approvedAt    DateTime?
+  approvedBy    String?
+
+  @@map("stock_transfers")
+}
+
+model RecipeItem {
+  id          String  @id @default(cuid())
+  productId   String
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ingredientId String
+  ingredient  Product @relation("RecipeIngredient", fields: [ingredientId], references: [id])
+  quantity    Float
+  unit        String  @default("adet")
+
+  @@unique([productId, ingredientId])
+  @@map("recipe_items")
+}
+
+model Supplier {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  taxNumber   String?
+  notes       String?
+  balance     Float    @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  purchaseOrders PurchaseOrder[]
+
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id          String   @id @default(cuid())
+  tenantId    String
+  branchId    String
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  status      PurchaseStatus @default(DRAFT)
+  total       Float    @default(0)
+  note        String?
+  orderDate   DateTime @default(now())
+  deliveryDate DateTime?
+  createdAt   DateTime @default(now())
+
+  items       PurchaseOrderItem[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String  @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  quantity        Float
+  unitPrice       Float
+  total           Float
+
+  @@map("purchase_order_items")
+}
+
+// ─────────────────────────────────────────────
+// CRM
+// ─────────────────────────────────────────────
+
+model Customer {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  firstName    String
+  lastName     String?
+  phone        String?
+  email        String?
+  birthDate    DateTime?
+  gender       Gender?
+  notes        String?
+  totalSpent   Float    @default(0)
+  visitCount   Int      @default(0)
+  loyaltyPoints Int     @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  orders       Order[]
+  loyaltyLogs  LoyaltyLog[]
+  campaignLogs CustomerCampaignLog[]
+
+  @@map("customers")
+}
+
+model LoyaltyLog {
+  id          String      @id @default(cuid())
+  customerId  String
+  customer    Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type        LoyaltyType
+  points      Int
+  reference   String?
+  createdAt   DateTime    @default(now())
+
+  @@map("loyalty_logs")
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  type        CampaignType
+  description String?
+  discount    Float?
+  minAmount   Float?
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+
+  logs        CustomerCampaignLog[]
+
+  @@map("campaigns")
+}
+
+model CustomerCampaignLog {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id])
+  usedAt      DateTime @default(now())
+  discount    Float
+
+  @@map("customer_campaign_logs")
+}
+
+// ─────────────────────────────────────────────
+// PERSONNEL
+// ─────────────────────────────────────────────
+
+model Shift {
+  id          String   @id @default(cuid())
+  branchId    String
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  startTime   DateTime
+  endTime     DateTime?
+  openingCash Float    @default(0)
+  closingCash Float?
+  totalSales  Float    @default(0)
+  note        String?
+  status      ShiftStatus @default(OPEN)
+  createdAt   DateTime @default(now())
+
+  entries     ShiftEntry[]
+
+  @@map("shifts")
+}
+
+model ShiftEntry {
+  id        String   @id @default(cuid())
+  shiftId   String
+  shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  checkIn   DateTime
+  checkOut  DateTime?
+  type      EntryType @default(REGULAR)
+
+  @@map("shift_entries")
+}
+
+// ─────────────────────────────────────────────
+// FINANCE
+// ─────────────────────────────────────────────
+
+model FinancialAccount {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  type        AccountType
+  balance     Float    @default(0)
+  currency    String   @default("TRY")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  transactions FinancialTransaction[]
+
+  @@map("financial_accounts")
+}
+
+model FinancialTransaction {
+  id          String          @id @default(cuid())
+  accountId   String
+  account     FinancialAccount @relation(fields: [accountId], references: [id])
+  branchId    String
+  branch      Branch          @relation(fields: [branchId], references: [id])
+  type        TransactionType
+  category    String?
+  amount      Float
+  description String?
+  reference   String?
+  date        DateTime        @default(now())
+  createdBy   String?
+  createdAt   DateTime        @default(now())
+
+  @@map("financial_transactions")
+}
+
+// ─────────────────────────────────────────────
+// ONLINE ORDERS
+// ─────────────────────────────────────────────
+
+model DeliveryZone {
+  id          String  @id @default(cuid())
+  branchId    String
+  name        String
+  minAmount   Float   @default(0)
+  fee         Float   @default(0)
+  polygon     Json?   // GeoJSON
+
+  @@map("delivery_zones")
+}
+
+model Courier {
+  id          String  @id @default(cuid())
+  tenantId    String
+  branchId    String
+  name        String
+  phone       String?
+  vehicleType String?
+  isActive    Boolean @default(true)
+  isAvailable Boolean @default(true)
+  latitude    Float?
+  longitude   Float?
+
+  @@map("couriers")
+}
+
+// ─────────────────────────────────────────────
+// VOICE COMMUNICATION
+// ─────────────────────────────────────────────
+
+model VoiceMessage {
+  id          String   @id @default(cuid())
+  tenantId    String
+  branchId    String
+  userId      String
+  userName    String
+  channel     String   // 'all' | 'waiter' | 'kitchen' | 'manager'
+  durationMs  Int      @default(0)
+  audioUrl    String?  // S3/MinIO path (opsiyonel kayıt)
+  transcript  String?  // speech-to-text (opsiyonel)
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, branchId, channel])
+  @@map("voice_messages")
+}
+
+// ─────────────────────────────────────────────
+// REPORTS
+// ─────────────────────────────────────────────
+
+model DailyReport {
+  id              String   @id @default(cuid())
+  tenantId        String
+  branchId        String
+  date            DateTime
+  totalOrders     Int      @default(0)
+  totalRevenue    Float    @default(0)
+  totalCost       Float    @default(0)
+  totalProfit     Float    @default(0)
+  averageCheck    Float    @default(0)
+  totalGuests     Int      @default(0)
+  paymentBreakdown Json    @default("{}")
+  hourlyData      Json     @default("[]")
+  topProducts     Json     @default("[]")
+  createdAt       DateTime @default(now())
+
+  @@unique([branchId, date])
+  @@map("daily_reports")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum PlanInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum UserRole {
+  SUPER_ADMIN    // Platform admin
+  OWNER          // Tenant owner
+  MANAGER        // Branch manager
+  CASHIER        // POS cashier
+  WAITER         // Waiter
+  KITCHEN        // Kitchen staff
+  DELIVERY       // Delivery staff
+  ACCOUNTANT     // Finance only
+}
+
+enum TableStatus {
+  EMPTY
+  OCCUPIED
+  RESERVED
+  CLEANING
+}
+
+enum TableShape {
+  SQUARE
+  ROUND
+  RECTANGLE
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+  QR_ORDER
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  SERVED
+  CANCELLED
+  CLOSED
+}
+
+enum OrderSource {
+  POS
+  QR_MENU
+  ONLINE
+  PHONE
+}
+
+enum KitchenStatus {
+  WAITING
+  PREPARING
+  READY
+  SERVED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CREDIT_CARD
+  DEBIT_CARD
+  ONLINE
+  LOYALTY
+  VOUCHER
+  TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum ProductType {
+  FOOD
+  DRINK
+  DESSERT
+  INGREDIENT
+  SERVICE
+}
+
+enum StockMoveType {
+  IN
+  OUT
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+  RECIPE_USAGE
+  WASTE
+}
+
+enum TransferStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DELIVERED
+}
+
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  PARTIAL
+  DELIVERED
+  CANCELLED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum LoyaltyType {
+  EARN
+  REDEEM
+  EXPIRE
+  ADJUST
+}
+
+enum CampaignType {
+  DISCOUNT_PERCENT
+  DISCOUNT_AMOUNT
+  BUY_X_GET_Y
+  FREE_ITEM
+  LOYALTY_BOOST
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum EntryType {
+  REGULAR
+  BREAK
+  OVERTIME
+}
+
+enum AccountType {
+  CASH
+  BANK
+  CREDIT
+  EXPENSE
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
