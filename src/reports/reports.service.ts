@@ -46,7 +46,7 @@ export class ReportsService {
       this.prisma.order.aggregate({
         where,
         _count: { _all: true },
-        _sum: { subtotal: true, tax: true, total: true, discount: true, serviceCharge: true },
+        _sum: { subtotal: true, taxAmount: true, total: true, discount: true, serviceCharge: true },
       }),
 
       // 2. Ödeme yöntemine göre kırılım
@@ -61,8 +61,8 @@ export class ReportsService {
       this.prisma.orderItem.groupBy({
         by: ['productId'],
         where: { order: where },
-        _sum: { quantity: true, totalPrice: true },
-        orderBy: { _sum: { totalPrice: 'desc' as const } },
+        _sum: { quantity: true, total: true },
+        orderBy: { _sum: { total: 'desc' as const } },
         take: 20,
       } as any),
 
@@ -98,7 +98,7 @@ export class ReportsService {
       summary: {
         totalOrders: orders._count._all,
         subtotal: orders._sum.subtotal || 0,
-        tax: orders._sum.tax || 0,
+        tax: orders._sum.taxAmount || 0,
         discount: orders._sum.discount || 0,
         serviceCharge: orders._sum.serviceCharge || 0,
         total: orders._sum.total || 0,
@@ -114,7 +114,7 @@ export class ReportsService {
         name: productMap[p.productId]?.name || 'Bilinmiyor',
         sku: productMap[p.productId]?.sku || null,
         quantity: p._sum.quantity || 0,
-        revenue: p._sum.totalPrice || 0,
+        revenue: p._sum.total || 0,
       })),
       discounts: {
         count: discounts._count._all,
